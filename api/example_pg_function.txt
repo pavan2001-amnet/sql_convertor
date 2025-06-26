@@ -1,0 +1,95 @@
+-- FUNCTION: public.sales_summary_brands_by_sales_filters(integer, json, json, json, json, date, date)
+
+-- DROP FUNCTION IF EXISTS public.sales_summary_brands_by_sales_filters(integer, json, json, json, json, date, date);
+
+CREATE OR REPLACE FUNCTION public.sales_summary_brands_by_sales_filters(
+	year integer,
+	month json,
+	store json,
+	state json,
+	channel json,
+	fromdate date,
+	todate date)
+    RETURNS SETOF refcursor 
+    LANGUAGE 'plpgsql'
+    COST 100
+    VOLATILE PARALLEL UNSAFE
+    ROWS 1000
+
+AS $BODY$
+#variable_conflict use_variable 
+
+    DECLARE query1 refcursor:= 'main';
+    DECLARE query2 refcursor:= 'yoy';
+    Declare query3 refcursor:= 'linegraph';
+    declare months integer[];
+    declare stores text[];
+    declare states text[];
+    declare channels text[];
+    begin
+    
+        if month is null or month::jsonb = '["all"]'::jsonb then 
+            months := null;
+        else
+            months := ARRAY(SELECT json_array_elements_text(month)::text);
+        end if;
+       
+       
+        if store is null or store::jsonb = '["all"]'::jsonb then 
+            stores := null;
+        else
+            stores := ARRAY(SELECT json_array_elements_text(store)::text);
+        end if;  
+		
+		
+        if state is null or state::jsonb = '["all"]'::jsonb then 
+            states := null;
+        else
+            states := ARRAY(SELECT json_array_elements_text(state)::text);
+        end if; 
+
+        if channel is null or channel::jsonb = '["all"]'::jsonb then 
+            channels := null;
+        else
+            channels := ARRAY(SELECT json_array_elements_text(channel)::text);
+        end if; 
+		
+		  if fromdate is not null or todate is not null then
+        
+             year := null;
+             months := null;     
+    else
+            year := year;
+             months := months;
+       end if;
+         
+        open query1 for 
+         select db."brandname" as y,
+	     sum(fs."salesamount") as x,
+	  currency_convert(sum(fs."salesamount")) as text,
+		 db."brandid" as id,
+		'bar' as type, 'h' as orientation
+	    from factsales as fs
+	    inner join DimProduct dp  on fs."productid" = dp."productid" 
+	    inner join DimBrand db  on db."brandid"= dp."brandid"
+	    inner join dimdate dd on fs."OrderDate" = dd."calendar"
+        inner join dimstore ds on fs."storeid" = ds."storeid"
+        inner join dimregion dr on dr."regionid" = ds."regionid" 
+        inner join dimchannel dc on dc."channelid" = fs."channelid"
+         where (year IS NULL OR dd."financialyear" = year)
+             and (months IS NULL OR date_part('MONTH', fs."OrderDate") = ANY(months))
+             and (states IS NULL OR dr."level3value"  = ANY(states))
+             and (stores IS NULL OR fs."storeid"::text = ANY(stores))
+             and (channels IS NULL OR fs."channelid"::text = ANY(channels))
+             and (fromdate is null or fs."OrderDate" between fromdate and todate)
+			 group by db."brandname",db."brandid" 
+		     order by x asc;
+
+        return next query1;
+        
+        
+    END;
+$BODY$;
+
+ALTER FUNCTION public.sales_summary_brands_by_sales_filters(integer, json, json, json, json, date, date)
+    OWNER TO ubuntu;
